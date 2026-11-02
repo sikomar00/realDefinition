@@ -516,7 +516,7 @@ class SupabaseBackend(unittest.TestCase):
         st = json.loads(d)
         self.assertEqual(st["backend"], "supabase")
         self.assertIsNone(st["user"])
-        self.assertEqual(set(st["auth"]), {"url", "anon_key"})  # 공개 값만: 비밀번호·서비스 키는 화면으로 나가지 않는다
+        self.assertEqual(set(st["auth"]), {"url", "public_key"})  # 공개 값만: 비밀번호·서비스 키는 화면으로 나가지 않는다
         for secret in ("PASSWORD", "service_role"):
             self.assertNotIn(secret, d.decode())
         s, _, d = self.req("GET", "/api/status", headers=self.AUTH)
@@ -757,6 +757,61 @@ class DatabaseDialects(unittest.TestCase):
     def test_token_with_wrong_shape_is_rejected_without_network(self):
         for bad in (None, "", "abc", "a.b", "a.b.c.d"):
             self.assertIsNone(db.verify_token(bad))
+
+
+class PublicKey(unittest.TestCase):
+    """INT-010: 새 publishable 키로 옮겨도 로그인 확인이 깨지지 않게 한다. 옛 anon 키 이름은 롤백용으로 계속 읽는다."""
+    ENV = ("SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_KEY")
+
+    def setUp(self):
+        self._saved = {k: os.environ.pop(k, None) for k in self.ENV}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+    def test_new_key_wins_and_old_name_still_works(self):
+        self.assertIsNone(db.public_key())
+        os.environ["SUPABASE_ANON_KEY"] = "legacy-anon"
+        self.assertEqual(db.public_key(), "legacy-anon")           # 환경변수를 지우면 옛 키로 복귀(롤백)
+        os.environ["SUPABASE_PUBLISHABLE_KEY"] = "sb_publishable_test"
+        self.assertEqual(db.public_key(), "sb_publishable_test")   # 새 키가 우선
+
+    def test_verify_token_sends_the_key_only_in_apikey_header(self):
+        """새 키는 JWT가 아니라 Authorization: Bearer 에 넣으면 거절된다. 사용자 토큰만 Bearer 에 실려야 한다."""
+        import unittest.mock
+        os.environ["SUPABASE_PUBLISHABLE_KEY"] = "sb_publishable_test"
+        seen = []
+
+        class Resp:
+            def read(self):
+                return b"{}"  # id 가 없으니 DB 조회 전에 None 으로 끝난다
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        with unittest.mock.patch.dict(os.environ, {"SUPABASE_URL": "https://example.supabase.co"}), \
+                unittest.mock.patch("urllib.request.urlopen", lambda req, timeout=None: seen.append(req) or Resp()):
+            self.assertIsNone(db.verify_token("aaa.bbb.ccc"))
+        h = {k.lower(): v for k, v in seen[0].header_items()}
+        self.assertEqual(h["apikey"], "sb_publishable_test")
+        self.assertEqual(h["authorization"], "Bearer aaa.bbb.ccc")
+        self.assertNotIn("sb_publishable_test", h["authorization"])
+
+    def test_qa_config_prefers_publishable_key_and_falls_back_to_anon(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("make_config", Path(__file__).resolve().parent.parent / "qa" / "make_config.py")
+        mc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mc)
+        legacy = [{"name": "anon", "api_key": "legacy-anon"}, {"name": "service_role", "api_key": "legacy-service"}]
+        new = {"name": "default", "api_key": "sb_publishable_x"}
+        self.assertEqual(mc.pick_public_key(legacy), "legacy-anon")
+        self.assertEqual(mc.pick_public_key(legacy + [new]), "sb_publishable_x")
+        self.assertIsNone(mc.pick_public_key([legacy[1]]))  # service_role 키는 절대 고르지 않는다
 
 
 if __name__ == "__main__":
