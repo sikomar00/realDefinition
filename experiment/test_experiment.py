@@ -12,14 +12,18 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import evaluate_v2 as E  # noqa: E402
+import gold_semantic as GS  # noqa: E402
 import llm_client as L  # noqa: E402
 import run_experiment as R  # noqa: E402
+import run_semantic as S  # noqa: E402
 import verification as V  # noqa: E402
 import verify_without_gold as VW  # noqa: E402
 
@@ -450,6 +454,192 @@ class ClientBehavior(unittest.TestCase):
         self.assertTrue(c.chat("sys", "user")["system_merged"])
         self.assertTrue(c.merge_system)
         self.assertEqual(s.hits, 2)
+
+
+# ------------------------------------------------------------------ INT-008 시맨틱 레이어 시험 (D-041)
+class SemanticRoute(unittest.TestCase):
+    KEYS = {"net_revenue", "paid_orders", "aov", "refund_rate", "cancel_rate"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qs = json.loads(S.QUESTIONS_FILE.read_text(encoding="utf-8"))
+
+    def test_parse_route(self):
+        p = lambda t: S.parse_route(t, self.KEYS)  # noqa: E731
+        self.assertEqual(p('```json\n{"metric": "aov", "months": ["2026-02", "2026-01", "2026-01"]}\n```'),
+                         ("aov", ["2026-01", "2026-02"], None))                      # 코드 블록·중복·순서 정리
+        self.assertEqual(p('설명 {"metric": "UNANSWERABLE", "months": []} 끝'), (S.UNAN, [], None))
+        self.assertEqual(p("모르겠습니다")[2], "bad_json")
+        self.assertEqual(p('{"metric": "revenue", "months": ["2026-01"]}')[2], "unknown_metric")
+        self.assertEqual(p('{"metric": "aov", "months": []}')[2], "bad_months")
+        self.assertEqual(p('{"metric": "aov", "months": ["1월"]}')[2], "bad_months")
+        self.assertEqual(p('{"metric": "aov"}')[2], "bad_months")
+        self.assertEqual(p("[1, 2]")[2], "bad_json")                                  # 객체가 아니면 거부
+
+    def test_questions_shape(self):
+        self.assertEqual((len(self.qs), sum(bool(q["metric"]) for q in self.qs)), (S.N_ALL, S.N_ANSWERABLE))
+        self.assertEqual(Counter(q["group"] for q in self.qs), {"main": 20, "holdout": 10})
+        self.assertEqual(len({q["id"] for q in self.qs}), 30)
+        for q in self.qs:  # 답할 수 없는 질문은 골드가 비어 있고, 답할 수 있는 질문은 값이 있다
+            self.assertEqual(q["gold_value"] is None, q["metric"] is None, q["id"])
+
+    def test_questions_file_is_what_the_builder_makes(self):
+        """질문 파일을 손으로 고치면(동결 위반) 잡힌다: 같은 DB에서 다시 만든 값과 같아야 한다."""
+        import sqlite3
+        con = sqlite3.connect(f"file:{R.DB}?mode=ro", uri=True)
+        self.assertEqual(GS.build(con), self.qs)
+        con.close()
+
+    def test_gold_matches_independent_python_recalculation(self):
+        """골드(SQL)를 규칙 문서(사전 v2)에서 파이썬으로 다시 계산한 값과 맞춘다. 두 방법이 달라지면 둘 중 하나가 틀린 것이다."""
+        import sqlite3
+        con = sqlite3.connect(f"file:{R.DB}?mode=ro", uri=True)
+        orders = con.execute("SELECT order_id, ordered_at, paid_at, status, items_ex_vat FROM orders").fetchall()
+        refunds = con.execute("SELECT order_id, refund_type, refund_amount FROM refunds").fetchall()
+        con.close()
+        refund_of = {}
+        for oid, kind, amt in refunds:
+            refund_of.setdefault(oid, []).append((kind, amt))
+        for q in self.qs:
+            if not q["metric"]:
+                continue
+            months = set(q["months"])
+            paid = [o for o in orders if o[2] and o[2][:7] in months]            # 결제 완료 = paid_at 값이 있음
+            items = {o[0]: o[4] for o in paid}
+            refund_ex = sum(items[oid] if kind == "FULL" else amt / 1.1
+                            for oid in items for kind, amt in refund_of.get(oid, []))
+            revenue = sum(items.values()) - refund_ex
+            valid = sum(1 for o in paid if o[3] == "PAID")
+            ordered = [o for o in orders if o[1][:7] in months and o[3] in ("PAID", "CANCELLED")]
+            want = {"net_revenue": revenue, "paid_orders": valid, "aov": revenue / valid,
+                    "refund_rate": 100 * refund_ex / sum(items.values()),
+                    "cancel_rate": 100 * sum(o[3] == "CANCELLED" for o in ordered) / len(ordered)}[q["metric"]]
+            self.assertTrue(R.is_match(q["metric"], want, q["gold_value"]), (q["id"], want, q["gold_value"]))
+
+    def test_scoring_s(self):
+        q = {q["id"]: q for q in self.qs}
+        rec = lambda: {"value": None, "status": None, "correct": False, "error": None}  # noqa: E731
+        ok = rec()
+        S.score_s(ok, '{"metric": "paid_orders", "months": ["2026-02"]}', q["S19"], self.KEYS)
+        self.assertEqual((ok["correct"], ok["value"]), (True, 129.0))
+        wrong_metric = rec()
+        S.score_s(wrong_metric, '{"metric": "cancel_rate", "months": ["2026-02"]}', q["S19"], self.KEYS)
+        self.assertFalse(wrong_metric["correct"])
+        refuse = rec()
+        S.score_s(refuse, '{"metric": "UNANSWERABLE", "months": []}', q["S16"], self.KEYS)  # 기간 밖 질문에 거절 = 정답
+        self.assertEqual((refuse["correct"], refuse["value"]), (True, S.UNAN_VALUE))
+        wrongly_refuse = rec()
+        S.score_s(wrongly_refuse, '{"metric": "UNANSWERABLE", "months": []}', q["S19"], self.KEYS)
+        self.assertFalse(wrongly_refuse["correct"])
+        answers_anyway = rec()  # 답할 수 없는 질문에 지표를 골라 답하면 오답
+        S.score_s(answers_anyway, '{"metric": "net_revenue", "months": ["2026-04"]}', q["S16"], self.KEYS)
+        self.assertFalse(answers_anyway["correct"])
+        garbage = rec()
+        S.score_s(garbage, "죄송합니다", q["S19"], self.KEYS)
+        self.assertEqual((garbage["correct"], garbage["status"]), (False, "bad_json"))
+
+    def test_judge_rule_fixed_before_results(self):
+        self.assertEqual((S.S_SUCCESS_ACC, S.S_SUCCESS_CONS, S.S_FAIL_GAIN_PP), (0.90, 0.90, 5.0))
+        self.assertEqual(S.judge(0.90, 0.90, 0.0), "성공")        # 경계는 성공
+        self.assertEqual(S.judge(0.899, 0.95, 40.0), "불명")      # 정확도 미달인데 B보다 크게 나음
+        self.assertEqual(S.judge(0.95, 0.899, 40.0), "불명")      # 일치율 미달
+        self.assertEqual(S.judge(0.70, 0.95, 4.9), "실패")        # B 대비 개선이 5%p 미만
+        self.assertEqual(S.judge(0.70, 0.95, 5.0), "불명")
+        self.assertEqual(S.overall({"a": "성공", "b": "성공"}), "성공")
+        self.assertEqual(S.overall({"a": "실패", "b": "실패"}), "실패")
+        self.assertEqual(S.overall({"a": "성공", "b": "실패"}), "불명")
+        self.assertEqual(S.overall({"a": "성공"}), "불명")        # 모델이 하나뿐이면 종합하지 않는다
+
+    def run_mock(self, tmp, model, temperature=None):
+        old = R.RUNS_MOCK_DIR
+        R.RUNS_MOCK_DIR = Path(tmp)
+        try:
+            argv = ["run_semantic.py", "--mock", "--mock-model", model, "--run-id", model]
+            with unittest.mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                S.main()
+        finally:
+            R.RUNS_MOCK_DIR = old
+        path = Path(tmp) / f"{model}.jsonl"
+        if temperature is not None:  # 모의 기록은 온도 0 이라 판정이 안 나온다. 판정 경로를 시험하려고 온도만 바꾼다
+            lines = path.read_text(encoding="utf-8").splitlines()
+            meta = json.loads(lines[0])
+            meta["temperature"] = temperature
+            path.write_text("\n".join([json.dumps(meta, ensure_ascii=False)] + lines[1:]) + "\n", encoding="utf-8")
+        return path
+
+    def test_mock_run_counts_resume_and_verdict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [self.run_mock(tmp, m, 0.7) for m in ("MOCK-X", "MOCK-Y")]
+            for p in paths:
+                runs = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines()[1:]]
+                self.assertEqual(Counter(r["cond"] for r in runs), {"S": 150, "B": 120})  # 30×5, 답할 수 있는 24×5
+                self.assertTrue(all(r["cond"] == "S" or self.qs_by_id(r["qid"])["metric"] for r in runs))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                S.evaluate([str(p) for p in paths])
+            self.assertIn("[종합 판정 (D-041)]", out.getvalue())
+            self.assertEqual(out.getvalue().count("[모델 판정]"), 2)
+
+    def test_resume_fills_only_missing_calls_and_refuses_changed_conditions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self.run_mock(tmp, "MOCK-R")
+            lines = p.read_text(encoding="utf-8").splitlines()
+            p.write_text("\n".join(lines[:-5]) + "\n", encoding="utf-8")        # 마지막 5개가 빠진 상태
+            self.run_mock(tmp, "MOCK-R")                                        # 같은 실행 ID로 다시 → 빠진 것만 채움
+            keys = [json.loads(l)["run_key"] for l in p.read_text(encoding="utf-8").splitlines()[1:]]
+            self.assertEqual((len(keys), len(set(keys))), (270, 270))
+            meta = json.loads(p.read_text(encoding="utf-8").splitlines()[0])    # 기록 조건을 바꾸면 이어쓰기를 거부
+            meta["questions_hash"] = "changed"
+            p.write_text("\n".join([json.dumps(meta)] + lines[1:]) + "\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                self.run_mock(tmp, "MOCK-R")
+
+    def qs_by_id(self, qid):
+        return next(q for q in self.qs if q["id"] == qid)
+
+    def test_unhashable_metric_is_a_format_error_not_a_call_failure(self):
+        """회귀: 리스트 metric 이 TypeError → llm_error 로 기록되던 문제."""
+        self.assertEqual(S.parse_route('{"metric": ["aov"], "months": ["2026-01"]}', self.KEYS)[2], "unknown_metric")
+        self.assertEqual(S.parse_route('{"metric": {"a": 1}, "months": []}', self.KEYS)[2], "unknown_metric")
+
+    def test_evaluate_counts_retried_calls_once_and_survives_partial_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [self.run_mock(tmp, m, 0.7) for m in ("MOCK-P", "MOCK-Q")]
+            lines = paths[0].read_text(encoding="utf-8").splitlines()
+            failed = dict(json.loads(lines[1]), status="llm_error", correct=False, value=None)
+            paths[0].write_text("\n".join([lines[0], json.dumps(failed, ensure_ascii=False)] + lines[1:]) + "\n", encoding="utf-8")
+            out = io.StringIO()  # 실패 기록 뒤에 같은 호출의 재시도 기록이 있어도 완료로 인정되어 판정이 나온다
+            with contextlib.redirect_stdout(out):
+                S.evaluate([str(p) for p in paths])
+            self.assertEqual(out.getvalue().count("[모델 판정]"), 2)
+            partial = Path(tmp) / "partial.jsonl"  # 앞 4줄만(스모크 테스트 상태)이어도 0으로 나누지 않는다
+            partial.write_text("\n".join(lines[:5]) + "\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                S.evaluate([str(partial)])
+
+    def test_incomplete_run_gets_no_verdict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self.run_mock(tmp, "MOCK-Z", 0.7)
+            lines = p.read_text(encoding="utf-8").splitlines()
+            p.write_text("\n".join(lines[:-3]) + "\n", encoding="utf-8")  # 호출 3개가 덜 끝난 상태
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                S.evaluate([str(p)])
+            self.assertIn("판정 없음", out.getvalue())
+            self.assertNotIn("[종합 판정", out.getvalue())
+
+    def test_prompts_do_not_contain_answers(self):
+        """누수 점검: 모델이 보는 입력(시스템·사전·질문)에 정답 값과 골드 SQL이 없어야 한다."""
+        d = json.loads(S.DICT_FILE.read_text(encoding="utf-8"))
+        seen = S.SYSTEM_S + S.build_prompt_s(S.render_keyed(d), "질문") + R.load_schema()
+        import re
+        for q in self.qs:
+            if q["metric"]:
+                self.assertNotIn(q["gold_sql"], seen)
+                v = q["gold_value"]
+                for text in {f"{v:,.0f}", f"{v:.0f}", f"{v:.2f}"} if v >= 100 else {f"{v:.2f}"}:  # 숫자 토큰 단위로만 찾는다('6.55' 때문에 '6'이 걸리지 않게)
+                    self.assertIsNone(re.search(rf"(?<![\d.,]){re.escape(text)}(?![\d.,])", seen), (q["id"], text))
+        self.assertNotIn("ledger", R.load_schema())
 
 
 if __name__ == "__main__":
