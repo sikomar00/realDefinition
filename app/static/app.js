@@ -98,7 +98,7 @@ async function login(email, password, pwInput) {
   S.auth.busy = true; S.auth.msg = "로그인 중…"; S.auth.kind = "info"; renderAccount();
   try {
     const res = await fetch(S.status.auth.url + "/auth/v1/token?grant_type=password", { method: "POST",
-      headers: { apikey: S.status.auth.anon_key, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+      headers: { apikey: S.status.auth.public_key, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
       S.auth.msg = j.error_code === "invalid_credentials" ? "이메일 또는 비밀번호가 맞지 않습니다." : `로그인 실패 (${res.status}${j.error_code ? ", " + j.error_code : ""})`;

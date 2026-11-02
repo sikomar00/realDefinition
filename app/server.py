@@ -153,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
                 st = {"llm_key": bool(has_key and (user or not PUBLIC)), "ai_login_required": bool(has_key and PUBLIC and not user),
                       "default_model": engine.DEFAULT_MODEL, "data_months": engine.VALID_MONTHS, "backend": engine.BACKEND, "public": PUBLIC}
                 if engine.BACKEND == "supabase":  # 로그인 화면이 Supabase Auth 로 직접 로그인하는 데 쓰는 공개 값(비밀 아님)
-                    st["auth"] = {"url": os.environ.get("SUPABASE_URL"), "anon_key": os.environ.get("SUPABASE_ANON_KEY")}
+                    st["auth"] = {"url": os.environ.get("SUPABASE_URL"), "public_key": db.public_key()}
                     st["user"] = {"email": user["email"]} if user else None
                 return self._json(st)
             if path == "/api/dictionary":

@@ -2,7 +2,8 @@
 
 켜는 법:  POC_DESK_BACKEND=supabase  (.env 의 값은 자동으로 읽는다. 이미 있는 환경변수는 덮어쓰지 않는다)
 필요한 값: SUPABASE_PROJECT_REF, SUPABASE_POOLER_HOST(선택), 역할별 비밀번호
-           POC_READER_DEMO_PASSWORD, APP_SERVICE_PASSWORD, SUPABASE_URL(로그인 검증용), SUPABASE_ANON_KEY
+           POC_READER_DEMO_PASSWORD, APP_SERVICE_PASSWORD, SUPABASE_URL(로그인 검증용),
+           SUPABASE_PUBLISHABLE_KEY (옛 이름 SUPABASE_ANON_KEY 도 읽는다)
 
 역할을 나눠서 쓴다 (docs/13, erd.md):
   poc_reader_demo  모델이 만든 SQL·계산식 실행 전용. demo 스키마 읽기만, 읽기 전용 트랜잭션, 5초 제한. app·personal 접근 불가
@@ -294,6 +295,11 @@ def get_run(run_id, user_id):
 _user_cache, _user_lock = {}, threading.Lock()
 
 
+def public_key():
+    """Supabase 공개 키. 새 publishable 키를 먼저 쓰고, 없으면 옛 anon 키(2026년 말 폐기 예정)로 돌아간다."""
+    return os.environ.get("SUPABASE_PUBLISHABLE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+
+
 def verify_token(access_token):
     """로그인 토큰이 유효하고 app.profiles 에 등록된 본인 계정이면 {'id','email'}, 아니면 None."""
     if not access_token or access_token.count(".") != 2:
@@ -305,7 +311,8 @@ def verify_token(access_token):
         if hit and now - hit[0] < 30:
             return hit[1]
     req = urllib.request.Request(_need("SUPABASE_URL") + "/auth/v1/user",
-                                 headers={"apikey": _need("SUPABASE_ANON_KEY"), "Authorization": "Bearer " + access_token})
+                                 headers={"apikey": public_key() or _need("SUPABASE_PUBLISHABLE_KEY"),  # 새 키는 JWT가 아니라 Bearer에 넣을 수 없다
+                                          "Authorization": "Bearer " + access_token})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             user = json.loads(r.read())
