@@ -2,7 +2,7 @@
 id: README
 title: realDefinition — 문제 정의 프레임워크 포트폴리오
 status: final
-updated: 2026-10-22
+updated: 2026-11-02
 ---
 
 # realDefinition — 문제 정의 프레임워크 포트폴리오
@@ -18,6 +18,7 @@ updated: 2026-10-22
 | KPI 정의서를 LLM에 주면 SQL 정확도가 오르나 | **1~7% → 59~66%** (모델 2개) |
 | 틀린 숫자를 걸러낼 수 있나 | 실제 LLM 오답 **14/14 검출**, 거짓 경보 0 |
 | 그러면 성공인가 | **아니요, "판정 불명".** 같은 질문 5번의 일관성이 71~74%로, 실험 전에 정한 기준(90%)에 못 미쳤습니다 |
+| LLM이 SQL 대신 지표·기간만 고르게 하면 나아지나 | 한 모델에서 정확도 99.3%(기존 방식 95.0%). 하지만 질문이 쉬워 둘을 가르지 못했고 두 번째 모델은 호출 한도로 끝내지 못해 **결론을 내지 못했습니다** ([18](docs/18-semantic-layer-results.md)) |
 
 기준은 결과를 보기 전에 고정했고, 마음에 들지 않는 결과가 나와도 바꾸지 않았습니다. 한계와 실수까지 포함한 **1~2분 요약은 [PORTFOLIO.md](PORTFOLIO.md)**, 전체 근거는 아래 목차에 있습니다.
 
@@ -36,7 +37,7 @@ updated: 2026-10-22
 python app/server.py
 ```
 
-테스트는 `python app/test_app.py`, `python experiment/test_experiment.py`로 돌립니다. 기본 모드(로컬 SQLite)는 추가 설치 없이 Python만 있으면 `http://127.0.0.1:8765`에서 열립니다. 클라우드 DB(Supabase) 모드는 접속 도구 설치와 환경 설정이 필요합니다([12](docs/12-poc-desk-app.md)). 질문 → 정의 확인 → 계산 → 정답 대조 → 리포트 흐름을 눌러 볼 수 있습니다. 자세한 내용은 [docs/12-poc-desk-app.md](docs/12-poc-desk-app.md).
+테스트는 `python app/test_app.py`(62개), `python experiment/test_experiment.py`(44개)로 돌립니다. 기본 모드(로컬 SQLite)는 추가 설치 없이 Python만 있으면 `http://127.0.0.1:8765`에서 열립니다. 클라우드 DB(Supabase) 모드는 접속 도구 설치와 환경 설정이 필요합니다([12](docs/12-poc-desk-app.md)). 질문 → 정의 확인 → 계산 → 정답 대조 → 리포트 흐름을 눌러 볼 수 있습니다. 자세한 내용은 [docs/12-poc-desk-app.md](docs/12-poc-desk-app.md). Supabase 모드의 공개 키 환경변수는 `SUPABASE_PUBLISHABLE_KEY`이고 옛 이름 `SUPABASE_ANON_KEY`도 읽습니다(옛 키는 2026년 말 폐기 예정, 이전 작업은 Intent의 INT-010).
 
 ## 한 줄 요약
 
@@ -49,7 +50,7 @@ python app/server.py
 
 ## 작업 의도 문서
 
-**[Intent.md](Intent.md)** — 작업마다 "문제 · 기대 결과 · 영향 범위 · 제약 · 열린 질문"을 먼저 쓰고, IA·UJ·PRD·ERD를 ID로 연결해 개발합니다. 지금 하고 있는 작업과 끝난 작업의 의도가 여기에 있습니다. 작업 규칙은 [CLAUDE.md](CLAUDE.md).
+**[Intent.md](Intent.md)** — 작업마다 "문제 · 기대 결과 · 영향 범위 · 제약 · 열린 질문"을 먼저 쓰고, IA·UJ·PRD·ERD를 ID로 연결해 개발합니다. 지금 하고 있는 작업(진행 중: INT-010 Supabase 옛 키 이전)과 끝난 작업의 의도가 여기에 있습니다. 작업 규칙은 [CLAUDE.md](CLAUDE.md).
 
 ## 문서 읽는 순서
 
@@ -76,7 +77,7 @@ python app/server.py
 | 17 | [구현 설계서](docs/17-technical-design.md) | 무슨 라이브러리·버전으로, 어느 파일이 무슨 일을, 어떤 순서로·어떻게 확인하며 만드나? 외부 한도와 위험은? | draft |
 | 18 | [시맨틱 레이어 시험 결과](docs/18-semantic-layer-results.md) | LLM이 SQL 대신 지표·기간만 고르게 하면 나아지나? (부분 완료, 종합 "불명") | draft |
 
-코드·데이터: `app/` (realDefinition 로컬 웹앱), `data/` (합성 샘플 DB 생성기, 정의별 검증 스크립트, 가계부 CSV 점검·정의별 계산·앱 합계 대조 스크립트), `experiment/` (실험용 KPI 사전, 질문 20개와 골드 답, H3 테스트 세트). 실데이터는 `data/private/`(Git 제외).
+코드·데이터: `app/` (realDefinition 로컬 웹앱), `data/` (합성 샘플 DB 생성기, 정의별 검증 스크립트, 가계부 CSV 점검·정의별 계산·앱 합계 대조 스크립트), `experiment/` (실험용 KPI 사전, 질문 20개와 골드 답, H3 테스트 세트, 시맨틱 시험용 새 질문 30개와 실행기 `gold_semantic.py`·`run_semantic.py`, 실행 기록 `runs_semantic/`), `qa/` (Supabase 점검 화면). 실데이터는 `data/private/`(Git 제외).
 
 
 ## 문서 규격 (모든 문서 공통)
