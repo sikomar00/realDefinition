@@ -61,7 +61,7 @@ depends_on: [03-prd, 04-journey-and-flow, erd, 02-thinking-log, 17-technical-des
 ## 1. 현재 작업
 
 ### INT-010 Supabase 옛 `anon` 키를 새 publishable 키로 이전 (연말 폐기 전)
-**상태:** 진행 중 — 하위 호환 코드·테스트 완료(2026-11-02, 앱 62개·실험 44개 통과, **커밋·푸시 전**). 다음: 푸시·배포 → 사용자가 새 키 생성(Q1) → 환경변수 추가(Q2) → 운영 검증
+**상태:** 진행 중 — 하위 호환 코드·테스트 완료(2026-11-02, 앱 62개·실험 44개 통과), 푸시·배포 완료(c271b02). 2026-11-13 확인: 공개 데모는 아직 옛 `anon` 키로 동작. 다음: 사용자가 새 키 생성(Q1) → 환경변수 추가(Q2) → 운영 검증
 
 #### 1) 문제 (Problem)
 옛 키 `anon`·`service_role`은 공식 문서상 **2026년 말까지 폐기 예정**이다(옛 키와 새 키는 동시에 작동). 이 저장소가 쓰는 것은 `anon` 키뿐이다(확인: 코드 검색, `service_role`은 쓰지 않고 DB 역할 비밀번호로 접속). 쓰는 곳: 서버의 로그인 확인(`app/db.py`), 로그인 화면(`app/static/app.js`·`app/server.py`가 키를 내려줌), QA 점검 화면(`qa/index.html`, `qa/make_config.py`), Vercel 환경변수와 로컬 `.env`의 `SUPABASE_ANON_KEY`. 새 publishable 키(`sb_publishable_...`)는 JWT가 아니라서 **`apikey` 헤더로만** 보내야 하고 `Authorization: Bearer`에 넣으면 거절된다. `qa/index.html`이 로그인 전에 `Bearer`에 키를 넣고 있어 키만 바꾸면 깨진다. 문서에 없는 것: 로그인(`/auth/v1/...`) 호출이 새 키를 받는지(직접 호출로 확인해야 함).
