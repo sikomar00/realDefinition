@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 로컬 개발은 3.11, Vercel 배포는 3.12라 둘 다 돌린다(docs/17-technical-design.md R5)
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -r requirements.txt
+      # 시험은 표준 라이브러리와 로컬 SQLite만 쓰고, LLM·Supabase는 가짜 서버나 가짜 키로 대신한다
+      - run: python app/test_app.py
+      - run: python experiment/test_experiment.py
