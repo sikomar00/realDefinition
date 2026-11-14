@@ -1,11 +1,6 @@
----
-id: README
-title: realDefinition — 문제 정의 프레임워크 포트폴리오
-status: final
-updated: 2026-11-02
----
-
 # realDefinition — 문제 정의 프레임워크 포트폴리오
+
+[![CI](https://github.com/sikomar00/realDefinition/actions/workflows/ci.yml/badge.svg)](https://github.com/sikomar00/realDefinition/actions/workflows/ci.yml)
 
 ## "이번 달 매출 알려줘" — 같은 데이터인데 정의에 따라 숫자가 최대 31% 갈립니다
 
@@ -23,10 +18,6 @@ updated: 2026-11-02
 기준은 결과를 보기 전에 고정했고, 마음에 들지 않는 결과가 나와도 바꾸지 않았습니다. 한계와 실수까지 포함한 **1~2분 요약은 [PORTFOLIO.md](PORTFOLIO.md)**, 전체 근거는 아래 목차에 있습니다.
 
 ---
-
-> 저장소: [sikomar00/realDefinition](https://github.com/sikomar00/realDefinition) · **공개 데모: [realdefinition.vercel.app](https://realdefinition.vercel.app)** (합성 데이터, 설치 없이 바로 체험)
-
-> **처음 보시는 분은 [PORTFOLIO.md](PORTFOLIO.md)(1~2분 요약)부터 읽으세요.** 아래는 전체 문서 목차입니다.
 
 > "모호한 요구를, 검증 가능한 과제로 바꾸고, 만들어 보고, 숫자와 기록으로 증명한다."
 결과물만 보여 주는 것이 아니라 **왜 이 문제를 골랐고, 어떻게 생각했고, 무엇을 배웠는지**를 문서로 남깁니다.
@@ -82,7 +73,7 @@ python app/server.py
 
 ## 문서 규격 (모든 문서 공통)
 
-1. **front-matter**: `id`, `title`, `status`(draft/review/final), `updated`, `depends_on`.
+1. **front-matter**: `id`, `title`, `status`(draft/review/final), `updated`, `depends_on`. 단, 이 README는 GitHub 첫 화면에서 표로 보이지 않도록 front-matter를 두지 않습니다.
 2. **고정 구조**: `요약 → 본문 → 📘 개념 학습 → 열린 질문 → 변경 이력`.
 3. **📘 개념 학습 박스**: 그 문서에서 처음 나온 개념을 초보자 눈높이로 설명.
 4. **결정은 근거와 함께**: "무엇을 / 왜 / 버린 대안"을 [사고 흐름 기록](docs/02-thinking-log.md)에 번호(D-001…)로 누적.
